@@ -5,6 +5,7 @@ const path = require('path');
 const ROLIMONS_URL = 'https://rolimons.com/api/catalogs/standard/recent';
 const SEEN_FILE = path.join(__dirname, 'seen.js');
 const MIN_QUANTITY = 20;
+const DISCORD_WEBHOOK = process.env.DISCORD_WEBHOOK_URL;
 
 /**
  * Fetch data from Rolimon's API with cache-busting timestamp
@@ -42,7 +43,6 @@ function readSeenFile() {
   
   try {
     const content = fs.readFileSync(SEEN_FILE, 'utf-8');
-    // Extract the object from module.exports = {...}
     const match = content.match(/module\.exports\s*=\s*({[\s\S]*});/);
     if (match) {
       return eval('(' + match[1] + ')');
@@ -63,13 +63,81 @@ function writeSeenFile(data) {
 }
 
 /**
+ * Send message to Discord webhook
+ */
+async function sendDiscordMessage(itemId, itemName, quantity, isNew) {
+  if (!DISCORD_WEBHOOK) {
+    console.log('[WARN] Discord webhook not configured');
+    return;
+  }
+
+  return new Promise((resolve, reject) => {
+    const action = isNew ? '🆕 NEW DROP' : '📈 STOCK CHANGE';
+    const color = isNew ? 3066993 : 10181046; // Green for new, orange for change
+    
+    const payload = JSON.stringify({
+      embeds: [{
+        title: action,
+        description: `**${itemName}**`,
+        fields: [
+          {
+            name: 'Item ID',
+            value: `${itemId}`,
+            inline: true
+          },
+          {
+            name: 'Quantity',
+            value: `${quantity}`,
+            inline: true
+          },
+          {
+            name: 'Timestamp',
+            value: new Date().toISOString(),
+            inline: false
+          }
+        ],
+        color: color,
+        url: `https://www.roblox.com/catalog/${itemId}/`
+      }]
+    });
+
+    const url = new URL(DISCORD_WEBHOOK);
+    const options = {
+      hostname: url.hostname,
+      path: url.pathname + url.search,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(payload)
+      }
+    };
+
+    const req = https.request(options, (res) => {
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        if (res.statusCode === 204) {
+          console.log('[DISCORD] Message sent successfully');
+          resolve();
+        } else {
+          reject(new Error(`Discord API error: ${res.statusCode}`));
+        }
+      });
+    });
+
+    req.on('error', reject);
+    req.write(payload);
+    req.end();
+  });
+}
+
+/**
  * Main tracker function
  */
 async function trackUGCDrops() {
   try {
     console.log('[INFO] Starting UGC drop tracker...');
     
-    // Fetch data from Rolimon's API
     const apiData = await fetchRolimonData();
     
     if (!apiData.items || !Array.isArray(apiData.items)) {
@@ -79,22 +147,18 @@ async function trackUGCDrops() {
     
     console.log(`[INFO] Fetched ${apiData.items.length} items from Rolimon's API`);
     
-    // Read existing seen items
     const seen = readSeenFile();
     let newItemsFound = false;
     
-    // Process each item
     for (const item of apiData.items) {
       const itemId = item.item_id;
       const itemName = item.item_name;
       const totalQuantity = item.total_quantity;
       
-      // Skip if quantity is below threshold
       if (totalQuantity < MIN_QUANTITY) {
         continue;
       }
       
-      // Check if item is new or if stock has changed
       const itemKey = String(itemId);
       const isNew = !seen[itemKey];
       const hasChangedStock = seen[itemKey] && seen[itemKey].quantity !== totalQuantity;
@@ -107,7 +171,13 @@ async function trackUGCDrops() {
           `[${action}] Item ID: ${itemId}, Name: ${itemName}, Quantity: ${totalQuantity}, Time: ${timestamp}`
         );
         
-        // Update seen object
+        // Send Discord notification
+        try {
+          await sendDiscordMessage(itemId, itemName, totalQuantity, isNew);
+        } catch (err) {
+          console.error(`[DISCORD_ERROR] Failed to send message: ${err.message}`);
+        }
+        
         seen[itemKey] = {
           item_id: itemId,
           item_name: itemName,
@@ -120,7 +190,6 @@ async function trackUGCDrops() {
       }
     }
     
-    // Write updated seen.js if changes were made
     if (newItemsFound) {
       console.log('[INFO] Changes detected. Updating seen.js...');
       writeSeenFile(seen);
@@ -135,5 +204,4 @@ async function trackUGCDrops() {
   }
 }
 
-// Run the tracker
 trackUGCDrops();
