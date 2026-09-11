@@ -2,7 +2,7 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 
-const ROLIMONS_URL = 'https://rolimons.com/api/catalogs/standard/recent';
+const ROLIMONS_API = 'https://api.rolimons.com/items/v2/itemdetails';
 const SEEN_FILE = path.join(__dirname, 'seen.js');
 const MIN_QUANTITY = 20;
 const DISCORD_WEBHOOK = process.env.DISCORD_WEBHOOK_URL;
@@ -12,7 +12,7 @@ const DISCORD_WEBHOOK = process.env.DISCORD_WEBHOOK_URL;
  */
 async function fetchRolimonData() {
   return new Promise((resolve, reject) => {
-    const url = `${ROLIMONS_URL}?t=${Date.now()}`;
+    const url = `${ROLIMONS_API}?t=${Date.now()}`;
     
     https.get(url, (res) => {
       let data = '';
@@ -140,20 +140,26 @@ async function trackUGCDrops() {
     
     const apiData = await fetchRolimonData();
     
-    if (!apiData.items || !Array.isArray(apiData.items)) {
-      console.log('[WARN] No items array found in API response');
+    if (!apiData.items || typeof apiData.items !== 'object') {
+      console.log('[WARN] No items object found in API response');
       return;
     }
     
-    console.log(`[INFO] Fetched ${apiData.items.length} items from Rolimon's API`);
+    const itemsArray = Object.entries(apiData.items);
+    console.log(`[INFO] Fetched ${itemsArray.length} items from Rolimon's API`);
     
     const seen = readSeenFile();
     let newItemsFound = false;
     
-    for (const item of apiData.items) {
-      const itemId = item.item_id;
-      const itemName = item.item_name;
-      const totalQuantity = item.total_quantity;
+    // Process each item from the API
+    // API format: { items: { "12345": ["Item Name", "Acronym", 45000, 50000, 1, 0, 1, 0, 0, 0], ... } }
+    for (const [itemId, itemData] of itemsArray) {
+      if (!Array.isArray(itemData) || itemData.length < 4) {
+        continue;
+      }
+      
+      const itemName = itemData[0]; // Name at index 0
+      const totalQuantity = itemData[3] || 0; // Quantity typically at index 3
       
       if (totalQuantity < MIN_QUANTITY) {
         continue;
