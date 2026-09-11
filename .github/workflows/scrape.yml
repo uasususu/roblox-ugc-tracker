@@ -1,7 +1,3 @@
-git clone https://github.com/uasususu/roblox-ugc-tracker.git
-cd roblox-ugc-tracker
-mkdir -p .github/workflows
-cat > .github/workflows/scrape.yml << 'EOF'
 name: Track Roblox UGC Drops
 
 on:
@@ -12,30 +8,39 @@ on:
 permissions:
   contents: write
 
+env:
+  DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+
 jobs:
   track-ugc:
     runs-on: ubuntu-latest
+    
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: '18'
-      - run: node index.js
-      - id: check_changes
+      
+      - name: Run UGC tracker script
+        run: node index.js
+      
+      - name: Check if seen.js changed
+        id: check_changes
         run: |
           if git diff --quiet seen.js; then
             echo "changes=false" >> $GITHUB_OUTPUT
           else
             echo "changes=true" >> $GITHUB_OUTPUT
           fi
-      - if: steps.check_changes.outputs.changes == 'true'
+      
+      - name: Commit and push changes
+        if: steps.check_changes.outputs.changes == 'true'
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git add seen.js
           git commit -m "Update seen.js with new UGC drops - $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
           git push
-EOF
-git add .github/workflows/scrape.yml
-git commit -m "Add GitHub Actions workflow"
-git push
